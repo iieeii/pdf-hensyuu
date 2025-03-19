@@ -1,0 +1,309 @@
+// index.html - フロントエンド
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>見積書PDF編集アプリ</title>
+    <style>
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: #fff;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        textarea, input[type="file"], input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+        textarea {
+            height: 200px;
+            resize: vertical;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            cursor: pointer;
+            font-size: 16px;
+            border-radius: 4px;
+            display: block;
+            margin: 30px auto 0;
+            width: 200px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .preview {
+            margin-top: 30px;
+            text-align: center;
+        }
+        #previewFrame {
+            width: 100%;
+            height: 500px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>見積書PDF編集アプリ</h1>
+        
+        <div class="form-group">
+            <label for="pdfTemplate">見積書テンプレートPDF:</label>
+            <input type="file" id="pdfTemplate" accept=".pdf">
+        </div>
+        
+        <div class="form-group">
+            <label for="instructionText">編集内容（テキスト指示）:</label>
+            <textarea id="instructionText" placeholder="例: 
+宛先: 株式会社サンプル
+日付: 2025年3月19日
+見積番号: EST-001
+項目1: ウェブサイト制作, 個数: 1, 単価: 300,000円
+項目2: ロゴデザイン, 個数: 1, 単価: 100,000円
+"></textarea>
+        </div>
+        
+        <button id="generateBtn">見積書PDFを生成</button>
+        
+        <div class="preview">
+            <h2>プレビュー</h2>
+            <iframe id="previewFrame" src="about:blank"></iframe>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('generateBtn').addEventListener('click', async function() {
+            const pdfFile = document.getElementById('pdfTemplate').files[0];
+            const instructionText = document.getElementById('instructionText').value;
+            
+            if (!pdfFile) {
+                alert('テンプレートPDFをアップロードしてください。');
+                return;
+            }
+            
+            if (!instructionText) {
+                alert('編集内容を入力してください。');
+                return;
+            }
+            
+            // FormDataオブジェクトを作成
+            const formData = new FormData();
+            formData.append('pdfTemplate', pdfFile);
+            formData.append('instructionText', instructionText);
+            
+            try {
+                // サーバーにリクエストを送信
+                const response = await fetch('/generate-pdf', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    throw new Error('PDFの生成に失敗しました。');
+                }
+                
+                // レスポンスをBlobとして取得
+                const blob = await response.blob();
+                
+                // BlobをオブジェクトURLに変換
+                const url = URL.createObjectURL(blob);
+                
+                // プレビューフレームにPDFを表示
+                document.getElementById('previewFrame').src = url;
+                
+                // ダウンロードリンクを作成（任意）
+                const downloadLink = document.createElement('a');
+                downloadLink.href = url;
+                downloadLink.download = '見積書_' + new Date().toISOString().slice(0, 10) + '.pdf';
+                downloadLink.textContent = 'ダウンロード';
+                downloadLink.style.display = 'block';
+                downloadLink.style.margin = '10px auto';
+                downloadLink.style.textAlign = 'center';
+                
+                // 既存のダウンロードリンクを削除
+                const existingLink = document.querySelector('.preview a');
+                if (existingLink) {
+                    existingLink.remove();
+                }
+                
+                // 新しいダウンロードリンクを追加
+                document.querySelector('.preview').appendChild(downloadLink);
+                
+            } catch (error) {
+                console.error('エラー:', error);
+                alert(error.message);
+            }
+        });
+    </script>
+</body>
+</html>
+
+// server.js - バックエンド（Node.js）
+const express = require('express');
+const multer = require('multer');
+const { PDFDocument } = require('pdf-lib');
+const fs = require('fs');
+const path = require('path');
+
+const app = express();
+const port = 3000;
+
+// ファイルアップロード用の設定
+const upload = multer({ 
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 } // 10MB制限
+});
+
+// 静的ファイルの提供
+app.use(express.static('public'));
+
+// PDFを生成するエンドポイント
+app.post('/generate-pdf', upload.single('pdfTemplate'), async (req, res) => {
+    try {
+        // テンプレートPDFファイルとテキスト指示を取得
+        const pdfBuffer = req.file.buffer;
+        const instructionText = req.body.instructionText;
+        
+        // テキスト指示をパース
+        const instructions = parseInstructions(instructionText);
+        
+        // PDFを編集
+        const editedPdfBytes = await editPdf(pdfBuffer, instructions);
+        
+        // 編集済みPDFを返す
+        res.contentType('application/pdf');
+        res.send(Buffer.from(editedPdfBytes));
+    } catch (error) {
+        console.error('PDF生成エラー:', error);
+        res.status(500).send('PDFの生成中にエラーが発生しました');
+    }
+});
+
+// テキスト指示をパースする関数
+function parseInstructions(text) {
+    const instructions = {};
+    const lines = text.split('\n').filter(line => line.trim());
+    
+    lines.forEach(line => {
+        const [key, value] = line.split(':').map(part => part.trim());
+        
+        if (key && value) {
+            // 項目のような特殊なケースを処理
+            if (key.startsWith('項目')) {
+                const itemMatch = key.match(/項目(\d+)/);
+                if (itemMatch) {
+                    const itemNum = itemMatch[1];
+                    const itemParts = value.split(',').map(part => part.trim());
+                    
+                    if (!instructions.items) {
+                        instructions.items = [];
+                    }
+                    
+                    const item = {};
+                    itemParts.forEach(part => {
+                        const [itemKey, itemValue] = part.split(':').map(p => p.trim());
+                        if (itemKey && itemValue) {
+                            item[itemKey] = itemValue;
+                        }
+                    });
+                    
+                    instructions.items[parseInt(itemNum) - 1] = item;
+                }
+            } else {
+                instructions[key] = value;
+            }
+        }
+    });
+    
+    return instructions;
+}
+
+// PDFを編集する関数
+async function editPdf(pdfBuffer, instructions) {
+    // PDFドキュメントを読み込む
+    const pdfDoc = await PDFDocument.load(pdfBuffer);
+    const form = pdfDoc.getForm();
+    
+    // フォームフィールドの取得
+    const fields = form.getFields();
+    
+    // 指示に基づいてフォームフィールドに入力
+    Object.entries(instructions).forEach(([key, value]) => {
+        // 特殊なケース（項目など）を処理
+        if (key === 'items' && Array.isArray(value)) {
+            value.forEach((item, index) => {
+                Object.entries(item).forEach(([itemKey, itemValue]) => {
+                    const fieldName = `item${index + 1}_${itemKey}`;
+                    const field = form.getTextField(fieldName);
+                    if (field) {
+                        field.setText(itemValue);
+                    }
+                });
+            });
+        } else {
+            // 通常のフィールド
+            const field = form.getTextField(key);
+            if (field) {
+                field.setText(value);
+            }
+        }
+    });
+    
+    // フォームフラットニング（オプション）
+    // form.flatten();
+    
+    // 編集したPDFをバイト配列として保存
+    const editedPdfBytes = await pdfDoc.save();
+    return editedPdfBytes;
+}
+
+// サーバー起動
+app.listen(port, () => {
+    console.log(`サーバーが http://localhost:${port} で起動しました`);
+});
+
+// package.json
+{
+  "name": "pdf-editor-app",
+  "version": "1.0.0",
+  "description": "見積書PDF編集アプリ",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "multer": "^1.4.5-lts.1",
+    "pdf-lib": "^1.17.1"
+  }
+}
